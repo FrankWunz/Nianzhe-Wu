@@ -1,0 +1,322 @@
+---
+title: "Obtaining class type and school effects on math scaled scores in Project STAR"
+author: "Nianzhe Wu"
+date: "3/18/2024"
+output:
+  html_document:
+    df_print: paged
+    number_sections: yes
+---
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.pos = 'H')
+```
+
+
+# Abstract
+This report uses data from The Tennessee Student/Teacher Achievement Ratio study(Project STAR) to explore the impact of class type and school on first-grade math scaled scores. In sections 2 to 4, we will mainly introduce the background of Project STAR and experimental designs. Section 5 is about Caveat which is our discussion based on initial report issues and will be improved in this report. After exploring the data set, we will use a two-way ANOVA model and find whether class type and school have an impact on grade 1 math scaled scores. In the last part, we will do diagnostics on our model.
+
+
+# Introduction
+
+In this report, we will use the dataset from Project STAR, we can get the data through Harvard Dataverse. With this dataset, we want to answer two questions that we interest:
+
+* The first question of interest is whether there are any differences in math-scaled scores in 1st grade across class types.
+
+* And based on the first question, we want to find which class type is associated with the highest math scaled scores in 1st grade.
+
+
+# Background
+
+The Student/Teacher Achievement Ratio (STAR) was a four-year longitudinal class-size study funded by the Tennessee General Assembly and conducted by the State Department of Education(Achilles, C.M., 2008). This experiment randomly separates students and teachers into different class types to find which class type can provide short- and long-term benefits for students, teachers, and society at large(Achilles, C.M., 2012). To explore our questions, we use a dataset from Harvard Dataverse, and we will look for the three class types in first grade and different school as our treatments, the math score of first grade as the observations.
+
+# Experimental Design
+
+The Project STAR randomly dispersed students and teachers to different classes in different schools from kindergarten to third grade. The students assigned to different classes/teachers and the teachers assigned to different classes are independent and random. Each school at least have one class of each of three types to ensure enough number of students and teachers (Achilles, C.M., 2008).
+
+The purpose of this experimental design was to explore the impact of class size on students and teachers generally. The good point about the experimental design is that students and teachers are randomly assigned to different class types, thus avoiding the interference of students' original abilities and teachers' teaching abilities in the experiment. But there are still areas that need improvement or more advanced design. For example, all experiments took place in schools in Tennessee, which resulted in Tennessee's race or policies limiting the generalizability of the experimental results to other areas. 
+
+# Caveats
+In the initial analysis report, we have quite a few caveats. Firstly, we will consider infeasible assumptions. In our two-way ANOVA model in the initial analysis, our equal variance of error terms is violated and the Q-Q plot of the normality of residuals are heavy tail, we can not say is normality. Thus, we cannot be certain that our results are accurate. This requires further research, so we will refer to some methods in the final analysis. The first is the Shapiro–Wilk test. This test is mainly used to detect whether our residuals are normally distributed. We will introduce it in detail when using this method. Secondly, when our homogeneity of variance assumption is not satisfied, we can first consider performing some transformation on the data. If it does not improve our results well, we can consider using the Scheirer-Ray-Hare Test. This test is a nonparametric statistical test used to analyze the effects of two or more variables on a single observation, which we will introduce in detail when using it. 
+
+There is also a issue about missing data. When we explore the dataset we can find that not all students have the math scale scores, we will exclude these students. And some schools do not have three class types, which does not conform to the experimental design, but they are all regular-aide types, this may lead some school different with others. We do not exclude these schools, but instead examine whether the association with math scaled scores across schools while simultaneously examining the our second question.
+
+
+
+
+
+# Explore the Dataset
+
+
+```{r,warning= F,message= F,echo = F,results= 'hide'}
+library(haven)
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(MASS)
+
+STAR = read_sav("STAR_Students.sav")
+STAR <- STAR %>% 
+  filter(!is.na(g1tmathss), !is.na(g1tchid),!is.na(g1classtype),!is.na(g1schid))
+
+table(STAR$g1classtype)
+table(STAR$g1classtype,STAR$g1schid)
+
+mean_math_teacher <- STAR %>% 
+  group_by(g1tchid)
+
+```
+
+After we did some processing of the missing data, we had 6598 different observations. From the analysis of class size of first grade, we found that the number of class types is different, with small class having the smallest number and regular class having the highest number. To find what caused the difference, we tried to compare the number of each school's class size, we found that each school doesn't set an equal number of class types or does not have regular-aide class, this may affect Homogeneity of variance in our analysis later, we will discuss it later.
+
+
+```{r, warning = F, message = F,results = 'hide',echo = F}
+mean_byclasstype <- mean_math_teacher %>% 
+  group_by(g1classtype) %>%
+  summarise(math1 = mean(g1tmathss,na.rm = TRUE))
+mean_byclasstype
+median_byclasstype <- mean_math_teacher %>% 
+  group_by(g1classtype) %>%
+  summarise(math1 = median(g1tmathss,na.rm = TRUE))
+median_byclasstype
+
+mean_classtype_teacher <- mean_math_teacher %>%
+  group_by(g1classtype,g1tchid) %>%
+  summarise(math1 = mean(g1tmathss,na.rm = TRUE))
+median_classtype_teacher <- mean_math_teacher %>%
+  group_by(g1classtype,g1tchid) %>%
+  summarise(math1 = median(g1tmathss,na.rm = TRUE))
+mean_classtype_teacher
+median_classtype_teacher
+
+```
+
+
+
+Firstly, we will set teacher and math score as a unit. Then to measure the student's performance, we try to use mean or median to stand for. We can find mean and median for different class types are very close this time, so we will focus on each class type math scale score. We can discuss which one we should choose as our summary measure based on the difference between mean and median. When our data is normally distributed, the mean and median are the same. However, we found that in the case of the same class type, the range of math scale scores is very large, which means that there are a few extreme values in the data. Therefore, we will use the median in our model, so we can reduce the impact of extreme values on our models.
+
+
+```{r,warning = F, message = F,echo = F, fig.dim= c(4,3)}
+library(ggplot2)
+
+median_classtype_teacher <- drop_na(median_classtype_teacher, g1classtype)
+median_classtype_teacher$g1classtype <- as.factor(median_classtype_teacher$g1classtype)
+
+
+ggplot(median_classtype_teacher, aes(x = median_classtype_teacher$g1classtype, y = math1)) +
+  geom_boxplot() +
+  labs(x = "Class Type", y = "Mean Math Score", title = "Plot 1 ")
+
+mean_forschool <- STAR %>%
+  group_by(g1schid) %>%
+  summarise(math1 = mean(g1tmathss,na.rm = TRUE))
+
+hist(mean_forschool$math1,xlab = "Mean math scaled score of school",main = " Plot 2")
+```
+
+By Plot1 we can find that the small class has the highest mean math scaled score. We can see that even the lower score of the small class is still very good compared to the other two classes, which may be evidence of the relationship between class type and math scale score. From the plot, we believe that there are no significant differences between regular class with regular with aide. From Plot2, we can find the histogram of school and math scale scores is the almost normal distribution and there is a significant difference in math scaled scores between schools, so in our model, we will consider using school as a factor to find whether there is a relationship between school and math scaled scores in first grade.
+
+
+
+# Inferential analysis 
+
+## Model build
+
+We can define two-way ANOVA model as follows:
+$$Y_{ijk} = \mu_{\cdot\cdot} + \alpha_i +\beta_j+ \epsilon_{ijk}$$
+
+* $\mu_{\cdot\cdot}$ is the overall mean for each teacher across all class type and school.
+
+* $\alpha_i$ is the effect of the class type i.
+
+* $\beta_j$ is the effect of the school j.
+
+* $\epsilon_{ijk}$ is the error term of each observation, and assume $\epsilon_{ijk}$~N(0,$\sigma^2$).
+
+* The constraints on these effects are $\sum_{i=1}^a\alpha_i = \sum_{j=1}^b\beta_j = 0$
+
+The assumptions we have as follow:
+
+* Normality of error terms
+
+* Independence of observation within and between groups.
+
+* Equal variances.
+
+```{r,echo = F}
+# Test for interactions
+full_model = lm(g1tmathss~g1classtype+g1schid+g1classtype*g1schid,data = mean_math_teacher)
+reduced_model = lm(g1tmathss~g1classtype+g1schid,data = mean_math_teacher)
+a <- data.frame(anova(reduced_model,full_model))
+kable(a, format = "html",caption = "Table 1") %>%
+  kable_styling(font_size = 10, full_width = F)
+```
+
+We use such a two-way ANOVA because our interest problem is to find the relationship between class type and math scaled scores. At the same time, when we explore the data, we find that there is a significant difference in math scaled scores between schools, so two-way ANOVA can solve our problems. From Table 1, there is no interaction term because the effect of class type is consistent across all schools, and the effect of school on class type is also consistent. Alternatively, removing interaction terms can simplify the model and not be far from the truth since the RSS(residual sum of squares) does not have significant difference, which can improve efficiency. Therefore, our model does not have an interaction term.
+
+
+## Fitting model
+
+```{r,message = F,echo = F}
+
+
+Data <- STAR %>%
+  group_by(g1classtype,g1schid,g1tchid) %>%
+  summarise(math1 = median(g1tmathss,na.rm = TRUE))
+Data$g1classtype <- as.factor(Data$g1classtype)
+Data$g1schid <- as.factor(Data$g1schid)
+colnames(Data)=c("classtype","school","teacher","math1")
+
+fit1 <- aov(math1 ~ classtype + school, data = Data)
+summary1 <- anova(fit1)
+
+kable(summary1, format = "html",caption = "Table 2") %>%
+  kable_styling(font_size = 10, full_width = F)
+```
+
+After we fitted our model, we can use the table from Table 2 to answer our questions of interest.
+The primary question of interest is whether there are any differences in math scaled scores in 1st grade across class types.
+For this one, we can build a hypothesis test that is :
+
+$H_o : \alpha_1 = \alpha_2 = \alpha_3 = 0$
+
+$H_a : \exists \alpha_i \neq 0, for ~i = 1,~2,~3$
+Based on the Analysis of the Variance Table, we can reject $H_0$, since the p-value is much smaller than the significant level of 0.5. Therefore, we can believe that there are differences in math scaled scores between these three class types. And from the ANOVA table, we can also find that there are differences in math scores between different schools. 
+
+```{r,warning = F,echo = F}
+
+tukey_results <- TukeyHSD(fit1,"classtype", conf.level = 0.95)
+
+tukey_table <- data.frame(
+  diff = tukey_results$classtype[, "diff"],
+  p_adj = tukey_results$classtype[, "p adj"]
+)
+rownames(tukey_table) <- c("Regular - Small", "Regular-aide - Small", "Regular-aide - Regular")
+kable(tukey_table, format = "html",caption = "Table 3")%>%
+  kable_styling(font_size = 10, full_width = F)
+```
+```{r,echo = F, results = 'hide'}
+TukeyHSD(fit1,"school", conf.level = 0.95)
+```
+
+
+For the second interest question, to find the class type with the highest math scaled scores in 1st grade we can use Tukey's range test with a 95% confidence interval to compare each class type to find it. The null hypothesis and alternative hypothesis are as follow:
+
+$H_0 = \alpha_i = \alpha_j,~i = 1,2,3,~j = 1,2,3,~ i \neq j$
+
+$H_0 = \alpha_i \neq \alpha_j,~ i = 1,2,3,~j = 1,2,3,~ i \neq j$
+
+By Table 3, we get the result that small class is associated with the highest math scaled scores in 1st grade. Regular with aide have higher math scores than regular class, but since the p-adj-value is higher than 0.05, we can say these two class types do not have a significant difference in math scaled scores of first grade. We can find that small class have the highest math scores, which is consistent with our reality because teachers in small class can give more attention and help to each student.
+
+And from our caveats part before, we can do Tukey's test for school(the result we will hide since it's too lengthy), and we find some schools have significant differences in math scaled scores, but most of them do not have a significant difference in math scaled scores of first grade. That could lead to a different number of class types, or potential experimental design issues like school policy. A more precise explanation will require a more sophisticated analysis and improvements in experimental design.
+
+For causal effects of class type and school on math scale score, we can firstly consider that the math score can not affect the randomization of class type or school, and also each teacher as an independent unit will not affect each other. Therefore, by the experimental design, we believe that the class type and school show causal effects on the math scale score. But some other factors may affect the math scale score such as policies of states or race. 
+
+Comparing to result of this analysis to our initial analysis, we find some different results. First, we find the effect of class type on math scale scores is more significant, especially the small class, and there is no significant difference between regular and regular with aide. Secondly, we can find that more class types are used in this analysis compared to the initial analysis, which may be one of the reasons that makes the results more significant.
+
+
+# Model Diagnostics
+
+
+```{r,echo = F,results = F, fig.dim= c(3,3)}
+plot(fit1,2,main = "Plot 3")
+```
+
+For Normality assumption, from the Q-Q plot we could see that is almost normality. Then we will try Shapiro-Wilk test to find whether it's normality. Shapiro-Wilk test is a way to test of normality and null hypothesis and alternative hypothesis are follow:
+
+$H_0$ : the same came from a normally distributed population.
+
+$H_a$ : the population is not normally distributed.
+
+If the p-value is less than the chosen alpha level, then we can reject the null hypothesis, which means the data tested are not normally distributed.(Wikipedia contributors., 2024,February 8)
+
+```{r,echo = F}
+residuals1 <- residuals(fit1)
+shapiro_test <- shapiro.test(residuals1)
+shaprio_table <- data.frame(shapiro_test$statistic,shapiro_test$p.value,shapiro_test$method)
+colnames(shaprio_table) = c("statistics","p-value","method")
+kable(shaprio_table, format = "html",caption = "Table 4") %>%
+  kable_styling(font_size = 10,full_width = F)
+```
+From Table 4 we find that the p-value of Shapiro-Wilk test is greater than 0.05, we can believe the residuals from normally distributed population. 
+
+
+```{r,echo = F,message = F}
+library(car)
+
+result1 <- leveneTest(math1~classtype*school, data = Data)
+Levene_table <- data.frame(
+  Df = result1$Df,
+  p_adj = result1$`Pr(>F)`
+)
+row.names(Levene_table) = c("classtype*school","Resudials")
+
+kable(Levene_table, format = "html",caption = "Table 5") %>%
+  kable_styling(font_size = 10, full_width = F)
+```
+
+To check the Homogeneity of variance(equal variance), we can use the Levene Test to do so. From the result of the Levene Test, we have a low p-value, which indicates that we reject the null hypothesis. So the variance is not equal.
+
+The independence of error terms is based on the experimental design since the students and teachers are randomly assigned to the different class types, we can believe this assumption is not violated.
+
+## Nonparametric approach
+
+
+Since the equal variance assumption is violated, we first considered transforming the data, but the results were still not very good. Then we use the Scheirer-Ray-Hare Test(extension of the Kruskal-Wallis test on more than one factor) to test whether the class type and school affected the math score of first grade. Scheirer-Ray-Hare Test is a statistical test that can be used to examine whether a measure is affected by two or more factors. It does not require a normal distribution of the data and homogeneity of variance. And the null hypothesis is the same as the two-way ANOVA. But the test strength of this test is lower than the multi-factorial Anova.(Wikipedia contributors.,2024, February 12)
+
+```{r,warning = F,message = F,echo = F}
+library(rcompanion)
+
+result <- scheirerRayHare(math1 ~ classtype + school, data = Data,verbose = F)
+
+SRH_table <- data.frame(
+  Df = result$Df,
+  p_adj = result$p.value
+)
+row.names(SRH_table) <- c("classtype", "school","classtype:school","Residuals")
+
+kable(SRH_table, format = "html",caption = "Table 6") %>%
+  kable_styling(font_size = 10, full_width = F)
+```
+
+The p-values of the Scheirer-Ray-Hare Test from Table 6 suggest that both classtype and school indicator independently affect math scores of first grade significantly, but their interaction does not significantly affect math scores, which we have shown before. The results shown in this table are consistent with the conclusions given by our model, which means that our results are reliable despite violating the assumption of Homogeneity of Variance.
+
+# Discussion 
+
+Project STAR is a project that investigate the effect of class size on test scores. We conducted an analysis of variance based on the data from this project and found through our analysis that small classes had the highest math scores, while there was no significant difference between regular and regular with aide. In addition, we found that school has a significant impact on math scaled scores. We speculate that it may be caused by some factors outside the experiment. The specific results need to be discovered through other experiments on schools. Finally, there are still caveats in our report such as violations of homogeneity of variances, which we believe may be caused by non-random missingness in the experimental data. Although we strengthened the reliability of our results through non-parametric methods, other more effective methods are still needed.
+
+
+
+
+# Acknowledgement {-}
+
+
+# Reference {-}
+
+Achilles, C.M., Bain, H. P., Bellott, F., Boyd-Zaharias, J., Finn, J., Folger, J., Johnston, J., & Word, E. (2008, October 7). Tennessee’s student teacher achievement ratio (STAR) project. Harvard Dataverse. https://dataverse.harvard.edu/dataset.xhtml?persistentId=hdl%3A1902.1%2F10766 
+
+Achilles, Charles M. (2012, September 30). Class-size policy: The Star Experiment and related class-size studies. NCPEA policy brief. volume 1, Number 2. NCPEA Publications. https://eric.ed.gov/?id=ED540485 
+
+Wikipedia contributors. (2024, February 8). Shapiro–Wilk test. In Wikipedia, The Free Encyclopedia. Retrieved 02:20, March 17, 2024, from https://en.wikipedia.org/w/index.php?title=Shapiro%E2%80%93Wilk_test&oldid=1204918626
+
+Wikipedia contributors. (2024, February 12). Scheirer–Ray–Hare test. In Wikipedia, The Free Encyclopedia. Retrieved 03:54, March 17, 2024, from https://en.wikipedia.org/w/index.php?title=Scheirer%E2%80%93Ray%E2%80%93Hare_test&oldid=1206571670
+
+# Code Appendix {-}
+```{r getlabels, echo = FALSE}
+labs = knitr::all_labels()
+labs = labs[!labs %in% c("setup","getlabels","allcode")]
+```
+```{r allcode, ref.label = labs, eval = FALSE}
+```
+
+
+
+
+# Session info {-}
+
+<span style='color:blue'>
+Report information of your `R` session for reproducibility. 
+</span> 
+
+```{r}
+sessionInfo()
+```
